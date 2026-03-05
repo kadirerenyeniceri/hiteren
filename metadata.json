@@ -1,0 +1,5 @@
+{
+  "name": "Card Game Companion",
+  "description": "A mobile-first companion app for scanning QR codes on game cards to play music and videos.",
+  "requestFramePermissions": ["camera"]
+}
