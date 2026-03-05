@@ -49,6 +49,8 @@ function Scan() {
     const video = videoRef.current;
     if (!video) return;
 
+    let hasNavigated = false;
+
     const startScanner = async () => {
       try {
         setStatus("Accessing camera...");
@@ -56,46 +58,38 @@ function Scan() {
         const qrScanner = new QrScanner(
           video,
           (result) => {
+            if (hasNavigated) return;
+            
             const data = result.data.trim();
-            const currentHost = window.location.hostname;
-            console.log("QR Data:", data);
+            console.log("QR Detected:", data);
 
-            let targetUrl = "";
-            try {
-              const urlStr = data.includes("://") ? data : `https://${data}`;
-              const url = new URL(urlStr);
-              const isOurDomain = url.hostname.includes(currentHost) || 
-                                 url.hostname.includes("vercel.app") ||
-                                 url.hostname.includes("localhost") ||
-                                 url.hostname.includes("run.app");
+            // En basit ID ayıklama: Metin içindeki ilk sayı grubunu bul
+            // Örn: "hithit.vercel.app/c/99" -> "99"
+            // Örn: "99" -> "99"
+            const match = data.match(/(\d+)/);
+            const foundId = match ? match[1] : null;
 
-              if (isOurDomain || url.pathname.includes("/c/") || url.pathname.includes("/play/")) {
-                targetUrl = url.pathname + url.search;
-              }
-            } catch (e) {
-              if (/^\d+$/.test(data)) {
-                targetUrl = `/play/${data}`;
-              } else {
-                const match = data.match(/\d+/);
-                if (match) targetUrl = `/play/${match[0]}`;
-              }
-            }
-
-            if (targetUrl) {
-              const idMatch = targetUrl.match(/\d+/);
-              setDetectedId(idMatch ? idMatch[0] : "QR");
-              setStatus("Card Found!");
+            if (foundId) {
+              hasNavigated = true;
+              setDetectedId(foundId);
+              setStatus("REDIRECTING...");
               
+              // Kamerayı hemen durdur
               qrScanner.stop();
+              
+              // 1. Seçenek: SPA içi hızlı yönlendirme
+              navigate(`/play/${foundId}`);
+              
+              // 2. Seçenek (Yedek): Eğer navigate takılırsa tarayıcıyı zorla
               setTimeout(() => {
-                window.location.href = targetUrl;
-              }, 500);
+                window.location.href = `/play/${foundId}`;
+              }, 100);
             }
           },
           {
             highlightScanRegion: true,
             highlightCodeOutline: true,
-            maxScansPerSecond: 20,
+            maxScansPerSecond: 10,
             preferredCamera: "environment"
           }
         );
@@ -116,7 +110,7 @@ function Scan() {
         scannerRef.current.destroy();
       }
     };
-  }, []);
+  }, [navigate]);
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col relative overflow-hidden">
