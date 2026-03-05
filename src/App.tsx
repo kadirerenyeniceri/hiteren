@@ -33,110 +33,87 @@ function Home() {
   );
 }
 
+import QrScanner from "qr-scanner";
+
 function Scan() {
   const navigate = useNavigate();
+  const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("Initializing...");
   const [showManualEntry, setShowManualEntry] = useState(false);
   const [manualId, setManualId] = useState("");
   const [detectedId, setDetectedId] = useState<string | null>(null);
-  const scannerRef = useRef<Html5Qrcode | null>(null);
-  const cameraId = "reader";
+  const scannerRef = useRef<QrScanner | null>(null);
 
   useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
     const startScanner = async () => {
       try {
         setStatus("Accessing camera...");
-        const html5QrCode = new Html5Qrcode(cameraId);
-        scannerRef.current = html5QrCode;
-
-        const config = {
-          fps: 25, // Daha hızlı tarama için FPS artırıldı
-          qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
-            // Ekranın %70'ini kaplayan dinamik tarama alanı
-            const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
-            const size = Math.floor(minEdge * 0.7);
-            return { width: size, height: size };
-          },
-          aspectRatio: 1.0,
-          experimentalFeatures: {
-            useBarCodeDetectorIfSupported: true
-          }
-        };
-
-        await html5QrCode.start(
-          { facingMode: "environment" },
-          config,
-          (decodedText) => {
-            const data = decodedText.trim();
+        
+        const qrScanner = new QrScanner(
+          video,
+          (result) => {
+            const data = result.data.trim();
             const currentHost = window.location.hostname;
-            console.log("Scanned Data:", data);
-            
-            let targetUrl = "";
+            console.log("QR Data:", data);
 
-            // 1. Durum: Veri bir URL mi?
+            let targetUrl = "";
             try {
-              // Protokol yoksa ekle (URL objesi için)
               const urlStr = data.includes("://") ? data : `https://${data}`;
               const url = new URL(urlStr);
-
-              // Bizim sitemiz mi? (Domain kontrolü)
               const isOurDomain = url.hostname.includes(currentHost) || 
                                  url.hostname.includes("vercel.app") ||
                                  url.hostname.includes("localhost") ||
-                                 url.hostname.includes("run.app"); // AI Studio desteği
+                                 url.hostname.includes("run.app");
 
-              if (isOurDomain) {
+              if (isOurDomain || url.pathname.includes("/c/") || url.pathname.includes("/play/")) {
                 targetUrl = url.pathname + url.search;
-              } else {
-                // Eğer bizim domain değilse ama içinde "c/" veya "play/" geçiyorsa yine de kabul et (Esneklik)
-                if (url.pathname.includes("/c/") || url.pathname.includes("/play/")) {
-                  targetUrl = url.pathname + url.search;
-                } else {
-                  setStatus("External QR ignored");
-                  return;
-                }
               }
             } catch (e) {
-              // 2. Durum: URL değilse, sadece sayı mı? (Kart ID'si)
               if (/^\d+$/.test(data)) {
                 targetUrl = `/play/${data}`;
               } else {
-                // Metin içinde sayı varsa onu almayı dene (Son çare)
                 const match = data.match(/\d+/);
-                if (match) {
-                  targetUrl = `/play/${match[0]}`;
-                } else {
-                  setStatus("Not a valid game QR");
-                  return;
-                }
+                if (match) targetUrl = `/play/${match[0]}`;
               }
             }
 
             if (targetUrl) {
-              setDetectedId(data.match(/\d+/)?.[0] || "QR");
-              setStatus("Valid QR Found!");
+              const idMatch = targetUrl.match(/\d+/);
+              setDetectedId(idMatch ? idMatch[0] : "QR");
+              setStatus("Card Found!");
               
-              // Kamerayı durdur ve yönlendir
-              html5QrCode.stop().finally(() => {
+              qrScanner.stop();
+              setTimeout(() => {
                 window.location.href = targetUrl;
-              });
+              }, 500);
             }
           },
-          () => {}
+          {
+            highlightScanRegion: true,
+            highlightCodeOutline: true,
+            maxScansPerSecond: 20,
+            preferredCamera: "environment"
+          }
         );
+
+        scannerRef.current = qrScanner;
+        await qrScanner.start();
         setStatus("Scanning...");
       } catch (err) {
         console.error("Scanner error:", err);
-        setError("Camera access denied. Please use HTTPS.");
+        setError("Camera access denied. Please ensure you are on HTTPS.");
       }
     };
 
     startScanner();
 
     return () => {
-      if (scannerRef.current && scannerRef.current.isScanning) {
-        scannerRef.current.stop().catch(err => console.error("Cleanup error", err));
+      if (scannerRef.current) {
+        scannerRef.current.destroy();
       }
     };
   }, []);
@@ -175,7 +152,11 @@ function Scan() {
             </div>
           ) : (
             <>
-              <div id={cameraId} className="w-full h-full" />
+              <video 
+                ref={videoRef} 
+                className="w-full h-full object-cover"
+                playsInline
+              />
               
               {/* Detected Overlay */}
               <AnimatePresence>
@@ -195,14 +176,8 @@ function Scan() {
                       </div>
                       <div className="space-y-2">
                         <h2 className="text-4xl font-black italic uppercase tracking-tighter text-white">CARD {detectedId}</h2>
-                        <p className="text-emerald-100 font-bold uppercase tracking-widest text-xs">Redirecting to video...</p>
+                        <p className="text-emerald-100 font-bold uppercase tracking-widest text-xs">Redirecting...</p>
                       </div>
-                      <button 
-                        onClick={() => window.location.href = `/play/${detectedId}`}
-                        className="px-8 py-4 bg-black text-white rounded-full font-black uppercase text-sm tracking-widest"
-                      >
-                        Click if not redirected
-                      </button>
                     </motion.div>
                   </motion.div>
                 )}
@@ -293,7 +268,7 @@ function Scan() {
                   }}
                   className="w-full py-4 text-zinc-500 font-bold uppercase text-xs tracking-widest"
                 >
-                  Back to Scanner
+                  Cancel
                 </button>
               </div>
             </motion.div>
