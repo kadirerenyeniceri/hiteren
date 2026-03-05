@@ -203,6 +203,7 @@ function PlayPage() {
   const [youtubeId, setYoutubeId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [hasInteracted, setHasInteracted] = useState(false);
 
   useEffect(() => {
     const loadCard = () => {
@@ -253,16 +254,37 @@ function PlayPage() {
                 Try Another Card
               </button>
             </motion.div>
+          ) : !hasInteracted ? (
+            <motion.div 
+              key="interact"
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="text-center space-y-8 p-8"
+            >
+              <div className="w-32 h-32 bg-white/10 rounded-full flex items-center justify-center mx-auto border-2 border-white/20">
+                <Play className="h-12 w-12 fill-white" />
+              </div>
+              <div className="space-y-2">
+                <h2 className="text-2xl font-bold italic uppercase tracking-tighter">Card Detected!</h2>
+                <p className="text-zinc-400 text-sm">Tap the button below to start with sound</p>
+              </div>
+              <button 
+                onClick={() => setHasInteracted(true)}
+                className="w-full max-w-xs py-6 bg-white text-black rounded-full font-black text-xl uppercase tracking-tight shadow-[0_0_30px_rgba(255,255,255,0.3)]"
+              >
+                PLAY NOW
+              </button>
+            </motion.div>
           ) : (
             <motion.div 
               key="player"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
               className="w-full h-full flex flex-col"
             >
               <div className="flex-1 relative bg-black">
                 <iframe
-                  src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&modestbranding=1&rel=0&showinfo=0`}
+                  src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&modestbranding=1&rel=0&showinfo=0&playsinline=1`}
                   className="absolute inset-0 w-full h-full"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
