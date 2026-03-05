@@ -1,9 +1,9 @@
 import { BrowserRouter, Routes, Route, useNavigate, useParams } from "react-router-dom";
 import { useState, useEffect, useRef } from "react";
 import { Camera, Play, ArrowLeft, RefreshCw, AlertCircle } from "lucide-react";
-import jsQR from "jsqr";
 import { motion, AnimatePresence } from "motion/react";
 import cardsData from "./cards.json";
+import { Html5Qrcode } from "html5-qrcode";
 
 // --- Components ---
 
@@ -35,112 +35,73 @@ function Home() {
 
 function Scan() {
   const navigate = useNavigate();
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isScanning, setIsScanning] = useState(true);
   const [status, setStatus] = useState("Initializing...");
   const [showManualEntry, setShowManualEntry] = useState(false);
   const [manualId, setManualId] = useState("");
+  const [detectedId, setDetectedId] = useState<string | null>(null);
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const cameraId = "reader";
 
   useEffect(() => {
-    let stream: MediaStream | null = null;
-    let animationFrameId: number;
-    let lastScanTime = 0;
-
-    const startCamera = async () => {
+    const startScanner = async () => {
       try {
         setStatus("Accessing camera...");
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { 
-            facingMode: "environment",
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          }
-        });
-        
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          // Wait for video to be ready
-          videoRef.current.onloadedmetadata = () => {
-            videoRef.current?.play();
-            setStatus("Scanning...");
-          };
-        }
-      } catch (err) {
-        console.error("Camera error:", err);
-        setError("Camera access denied or not supported. Please use HTTPS.");
-      }
-    };
+        const html5QrCode = new Html5Qrcode(cameraId);
+        scannerRef.current = html5QrCode;
 
-    const scan = (time: number) => {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      
-      // Throttle scanning to ~10 times per second to save CPU and improve accuracy
-      if (video && canvas && video.readyState === video.HAVE_ENOUGH_DATA && isScanning) {
-        if (time - lastScanTime > 100) { 
-          lastScanTime = time;
-          const ctx = canvas.getContext("2d", { alpha: false });
-          if (ctx) {
-            // Use a fixed smaller size for scanning to improve performance
-            const scanWidth = 640;
-            const scanHeight = (video.videoHeight / video.videoWidth) * scanWidth;
-            canvas.width = scanWidth;
-            canvas.height = scanHeight;
+        const config = {
+          fps: 15,
+          qrbox: { width: 250, height: 250 },
+          aspectRatio: 1.0
+        };
+
+        await html5QrCode.start(
+          { facingMode: "environment" },
+          config,
+          (decodedText) => {
+            console.log("QR Found:", decodedText);
+            const data = decodedText.trim();
             
-            ctx.drawImage(video, 0, 0, scanWidth, scanHeight);
-            const imageData = ctx.getImageData(0, 0, scanWidth, scanHeight);
+            let foundId = "";
             
-            const code = jsQR(imageData.data, imageData.width, imageData.height, {
-              inversionAttempts: "attemptBoth",
-            });
-
-            if (code && code.data) {
-              const data = code.data.trim();
-              console.log("QR Found:", data);
-              
-              let foundId = "";
-              if (/^\d+$/.test(data)) {
-                foundId = data;
-              } else {
-                try {
-                  const url = new URL(data);
-                  const match = url.pathname.match(/\/(?:c|play|card)\/([^/]+)/);
-                  if (match) foundId = match[1];
-                  else {
-                    const segments = url.pathname.split("/").filter(Boolean);
-                    const last = segments[segments.length - 1];
-                    if (last && /^\d+$/.test(last)) foundId = last;
-                  }
-                } catch (e) {
-                  const match = data.match(/\d+/);
-                  if (match) foundId = match[0];
-                }
-              }
-
-              if (foundId) {
-                setIsScanning(false);
-                setStatus("Success!");
-                navigate(`/play/${foundId}`);
-                return;
-              }
+            // 1. Sayı ayıklama (En garantisi)
+            const numbers = data.match(/\d+/g);
+            if (numbers && numbers.length > 0) {
+              // Eğer birden fazla sayı varsa, cards.json'da olanı veya en sondakini seç
+              foundId = numbers[numbers.length - 1];
             }
-          }
-        }
+
+            if (foundId) {
+              setDetectedId(foundId);
+              setStatus(`Card ${foundId} Detected!`);
+              
+              // Otomatik yönlendirme (Hafif gecikmeli ki kullanıcı görsün)
+              setTimeout(() => {
+                window.location.href = `/play/${foundId}`;
+              }, 800);
+
+              // Kamerayı durdur
+              html5QrCode.stop().catch(err => console.error("Stop error", err));
+            }
+          },
+          () => {}
+        );
+        setStatus("Scanning...");
+      } catch (err) {
+        console.error("Scanner error:", err);
+        setError("Camera access denied. Please use HTTPS.");
       }
-      animationFrameId = requestAnimationFrame(scan);
     };
 
-    startCamera().then(() => {
-      animationFrameId = requestAnimationFrame(scan);
-    });
+    startScanner();
 
     return () => {
-      if (stream) stream.getTracks().forEach(t => t.stop());
-      cancelAnimationFrame(animationFrameId);
+      if (scannerRef.current && scannerRef.current.isScanning) {
+        scannerRef.current.stop().catch(err => console.error("Cleanup error", err));
+      }
     };
-  }, [navigate, isScanning]);
+  }, []);
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col relative overflow-hidden">
@@ -155,7 +116,7 @@ function Scan() {
         <div className="px-4 py-1.5 bg-zinc-900/50 backdrop-blur-xl rounded-full border border-white/10">
           <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">{status}</p>
         </div>
-        <div className="w-12" /> {/* Spacer */}
+        <div className="w-12" />
       </div>
 
       <div className="flex-1 flex flex-col items-center justify-center p-6">
@@ -166,53 +127,70 @@ function Scan() {
               <div className="w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center">
                 <AlertCircle className="h-10 w-10 text-red-500" />
               </div>
-              <div className="space-y-2">
-                <h3 className="font-bold text-lg">Camera Error</h3>
-                <p className="text-sm text-zinc-500 leading-relaxed">{error}</p>
-              </div>
+              <p className="text-sm text-zinc-500">{error}</p>
               <button 
                 onClick={() => window.location.reload()}
-                className="w-full py-4 bg-white text-black rounded-2xl font-bold active:scale-95 transition-transform"
+                className="w-full py-4 bg-white text-black rounded-2xl font-bold"
               >
                 Try Again
               </button>
             </div>
           ) : (
             <>
-              <video 
-                ref={videoRef} 
-                autoPlay 
-                playsInline 
-                muted
-                className="absolute inset-0 w-full h-full object-cover scale-110"
-              />
-              <canvas ref={canvasRef} className="hidden" />
+              <div id={cameraId} className="w-full h-full" />
               
-              {/* UI Overlay */}
-              <div className="absolute inset-0 flex items-center justify-center">
-                {/* Corner Accents */}
-                <div className="relative w-64 h-64">
-                  <div className="absolute top-0 left-0 w-10 h-10 border-t-4 border-l-4 border-white rounded-tl-3xl" />
-                  <div className="absolute top-0 right-0 w-10 h-10 border-t-4 border-r-4 border-white rounded-tr-3xl" />
-                  <div className="absolute bottom-0 left-0 w-10 h-10 border-b-4 border-l-4 border-white rounded-bl-3xl" />
-                  <div className="absolute bottom-0 right-0 w-10 h-10 border-b-4 border-r-4 border-white rounded-br-3xl" />
-                  
-                  {/* Scanning Line */}
+              {/* Detected Overlay */}
+              <AnimatePresence>
+                {detectedId && (
                   <motion.div 
-                    animate={{ top: ["5%", "95%", "5%"] }}
-                    transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-                    className="absolute left-4 right-4 h-0.5 bg-gradient-to-r from-transparent via-white to-transparent shadow-[0_0_15px_rgba(255,255,255,1)]"
-                  />
-                </div>
-              </div>
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="absolute inset-0 z-30 bg-emerald-500 flex flex-col items-center justify-center p-6 text-center"
+                  >
+                    <motion.div
+                      initial={{ scale: 0.5 }}
+                      animate={{ scale: 1 }}
+                      className="space-y-6"
+                    >
+                      <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center mx-auto shadow-xl">
+                        <Play className="h-12 w-12 text-emerald-500 fill-emerald-500 ml-1" />
+                      </div>
+                      <div className="space-y-2">
+                        <h2 className="text-4xl font-black italic uppercase tracking-tighter text-white">CARD {detectedId}</h2>
+                        <p className="text-emerald-100 font-bold uppercase tracking-widest text-xs">Redirecting to video...</p>
+                      </div>
+                      <button 
+                        onClick={() => window.location.href = `/play/${detectedId}`}
+                        className="px-8 py-4 bg-black text-white rounded-full font-black uppercase text-sm tracking-widest"
+                      >
+                        Click if not redirected
+                      </button>
+                    </motion.div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
-              {/* Darken outside area */}
-              <div className="absolute inset-0 border-[3rem] border-black/40 pointer-events-none" />
+              {/* UI Overlay (Visual only) */}
+              {!detectedId && (
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div className="relative w-64 h-64">
+                    <div className="absolute top-0 left-0 w-10 h-10 border-t-4 border-l-4 border-white rounded-tl-3xl" />
+                    <div className="absolute top-0 right-0 w-10 h-10 border-t-4 border-r-4 border-white rounded-tr-3xl" />
+                    <div className="absolute bottom-0 left-0 w-10 h-10 border-b-4 border-l-4 border-white rounded-bl-3xl" />
+                    <div className="absolute bottom-0 right-0 w-10 h-10 border-b-4 border-r-4 border-white rounded-br-3xl" />
+                    
+                    <motion.div 
+                      animate={{ top: ["5%", "95%", "5%"] }}
+                      transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                      className="absolute left-4 right-4 h-0.5 bg-gradient-to-r from-transparent via-white to-transparent shadow-[0_0_15px_rgba(255,255,255,1)]"
+                    />
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
         
-        {/* Footer Info */}
         <div className="mt-12 text-center space-y-6">
           <div className="space-y-1">
             <h2 className="text-2xl font-black italic tracking-tighter uppercase">Scan QR Code</h2>
@@ -262,8 +240,7 @@ function Scan() {
                 <button 
                   onClick={() => {
                     if (manualId) {
-                      setIsScanning(false);
-                      navigate(`/play/${manualId}`);
+                      window.location.href = `/play/${manualId}`;
                     }
                   }}
                   disabled={!manualId}
