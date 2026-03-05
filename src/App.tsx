@@ -61,29 +61,47 @@ function Scan() {
             if (hasNavigated) return;
             
             const data = result.data.trim();
-            console.log("QR Detected:", data);
+            console.log("Raw QR Data:", data);
 
-            // En basit ID ayıklama: Metin içindeki ilk sayı grubunu bul
-            // Örn: "hithit.vercel.app/c/99" -> "99"
-            // Örn: "99" -> "99"
-            const match = data.match(/(\d+)/);
-            const foundId = match ? match[1] : null;
+            let foundId = "";
+
+            // 1. Öncelik: /c/ID veya /play/ID kalıbı (Kullanıcının isteği)
+            const cMatch = data.match(/\/(?:c|play|card)\/(\d+)/i);
+            if (cMatch) {
+              foundId = cMatch[1];
+              console.log("Detected ID via /c/ pattern:", foundId);
+            } 
+            // 2. Öncelik: URL sonundaki sayı (Örn: vercel.app/99)
+            else {
+              const lastSegmentMatch = data.match(/\/(\d+)\/?$/);
+              if (lastSegmentMatch) {
+                foundId = lastSegmentMatch[1];
+                console.log("Detected ID via last segment:", foundId);
+              }
+              // 3. Öncelik: Eğer veri sadece bir sayıysa (Örn: "99")
+              else if (/^\d+$/.test(data)) {
+                foundId = data;
+                console.log("Detected ID via raw numeric string:", foundId);
+              }
+            }
 
             if (foundId) {
               hasNavigated = true;
               setDetectedId(foundId);
-              setStatus("REDIRECTING...");
+              setStatus(`CARD ${foundId} FOUND!`);
+              console.log("Final Validated ID:", foundId);
               
-              // Kamerayı hemen durdur
               qrScanner.stop();
               
-              // 1. Seçenek: SPA içi hızlı yönlendirme
+              // Hızlı yönlendirme
               navigate(`/play/${foundId}`);
               
-              // 2. Seçenek (Yedek): Eğer navigate takılırsa tarayıcıyı zorla
+              // Yedek zorunlu yönlendirme
               setTimeout(() => {
                 window.location.href = `/play/${foundId}`;
               }, 100);
+            } else {
+              console.warn("No valid ID found in QR data:", data);
             }
           },
           {
