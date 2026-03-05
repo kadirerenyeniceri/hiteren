@@ -39,81 +39,92 @@ function Scan() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(true);
-  const [status, setStatus] = useState("Initializing camera...");
+  const [status, setStatus] = useState("Initializing...");
   const [showManualEntry, setShowManualEntry] = useState(false);
   const [manualId, setManualId] = useState("");
 
   useEffect(() => {
     let stream: MediaStream | null = null;
     let animationFrameId: number;
+    let lastScanTime = 0;
 
     const startCamera = async () => {
       try {
-        setStatus("Requesting camera access...");
+        setStatus("Accessing camera...");
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
+          video: { 
+            facingMode: "environment",
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
         });
+        
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          setStatus("Scanning for QR code...");
+          // Wait for video to be ready
+          videoRef.current.onloadedmetadata = () => {
+            videoRef.current?.play();
+            setStatus("Scanning...");
+          };
         }
       } catch (err) {
         console.error("Camera error:", err);
-        if (window.location.protocol !== "https:" && window.location.hostname !== "localhost") {
-          setError("Camera access requires an HTTPS connection.");
-        } else {
-          setError("Could not access camera. Please check permissions.");
-        }
+        setError("Camera access denied or not supported. Please use HTTPS.");
       }
     };
 
-    const scan = () => {
+    const scan = (time: number) => {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       
+      // Throttle scanning to ~10 times per second to save CPU and improve accuracy
       if (video && canvas && video.readyState === video.HAVE_ENOUGH_DATA && isScanning) {
-        const ctx = canvas.getContext("2d", { willReadFrequently: true });
-        if (ctx) {
-          canvas.height = video.videoHeight;
-          canvas.width = video.videoWidth;
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          
-          const code = jsQR(imageData.data, imageData.width, imageData.height, {
-            inversionAttempts: "attemptBoth", // Daha hassas tarama
-          });
+        if (time - lastScanTime > 100) { 
+          lastScanTime = time;
+          const ctx = canvas.getContext("2d", { alpha: false });
+          if (ctx) {
+            // Use a fixed smaller size for scanning to improve performance
+            const scanWidth = 640;
+            const scanHeight = (video.videoHeight / video.videoWidth) * scanWidth;
+            canvas.width = scanWidth;
+            canvas.height = scanHeight;
+            
+            ctx.drawImage(video, 0, 0, scanWidth, scanHeight);
+            const imageData = ctx.getImageData(0, 0, scanWidth, scanHeight);
+            
+            const code = jsQR(imageData.data, imageData.width, imageData.height, {
+              inversionAttempts: "attemptBoth",
+            });
 
-          if (code && code.data) {
-            console.log("Scanned:", code.data);
-            const scannedData = code.data.trim();
-            
-            // ID Ayıklama Mantığı
-            let foundId = "";
-            
-            if (/^\d+$/.test(scannedData)) {
-              foundId = scannedData;
-            } else {
-              try {
-                const url = new URL(scannedData);
-                const match = url.pathname.match(/\/(?:c|play|card)\/([^/]+)/);
-                if (match) {
-                  foundId = match[1];
-                } else {
-                  const segments = url.pathname.split("/").filter(Boolean);
-                  const last = segments[segments.length - 1];
-                  if (last && /^\d+$/.test(last)) foundId = last;
+            if (code && code.data) {
+              const data = code.data.trim();
+              console.log("QR Found:", data);
+              
+              let foundId = "";
+              if (/^\d+$/.test(data)) {
+                foundId = data;
+              } else {
+                try {
+                  const url = new URL(data);
+                  const match = url.pathname.match(/\/(?:c|play|card)\/([^/]+)/);
+                  if (match) foundId = match[1];
+                  else {
+                    const segments = url.pathname.split("/").filter(Boolean);
+                    const last = segments[segments.length - 1];
+                    if (last && /^\d+$/.test(last)) foundId = last;
+                  }
+                } catch (e) {
+                  const match = data.match(/\d+/);
+                  if (match) foundId = match[0];
                 }
-              } catch (e) {
-                const match = scannedData.match(/\d+/);
-                if (match) foundId = match[0];
               }
-            }
 
-            if (foundId) {
-              setIsScanning(false);
-              setStatus("Found! Redirecting...");
-              navigate(`/play/${foundId}`);
-              return; // Döngüden çık
+              if (foundId) {
+                setIsScanning(false);
+                setStatus("Success!");
+                navigate(`/play/${foundId}`);
+                return;
+              }
             }
           }
         }
@@ -126,35 +137,44 @@ function Scan() {
     });
 
     return () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
+      if (stream) stream.getTracks().forEach(t => t.stop());
       cancelAnimationFrame(animationFrameId);
     };
   }, [navigate, isScanning]);
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col relative overflow-hidden">
-      <div className="absolute top-6 left-6 z-20">
+      {/* Header */}
+      <div className="absolute top-0 left-0 right-0 z-20 p-6 flex items-center justify-between bg-gradient-to-b from-black/80 to-transparent">
         <button 
           onClick={() => navigate("/")}
-          className="p-3 bg-zinc-900/80 backdrop-blur-md rounded-full border border-white/10"
+          className="p-3 bg-zinc-900/50 backdrop-blur-xl rounded-full border border-white/10 active:scale-90 transition-transform"
         >
           <ArrowLeft className="h-6 w-6" />
         </button>
+        <div className="px-4 py-1.5 bg-zinc-900/50 backdrop-blur-xl rounded-full border border-white/10">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">{status}</p>
+        </div>
+        <div className="w-12" /> {/* Spacer */}
       </div>
 
       <div className="flex-1 flex flex-col items-center justify-center p-6">
-        <div className="relative w-full max-w-sm aspect-square border-2 border-white/20 rounded-3xl overflow-hidden bg-zinc-900 shadow-2xl">
+        {/* Scanner Window */}
+        <div className="relative w-full max-w-sm aspect-square rounded-[2.5rem] overflow-hidden bg-zinc-900 shadow-[0_0_50px_rgba(0,0,0,0.5)] border border-white/5">
           {error ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center space-y-4">
-              <AlertCircle className="h-12 w-12 text-red-500" />
-              <p className="text-sm text-zinc-400">{error}</p>
+            <div className="absolute inset-0 flex flex-col items-center justify-center p-10 text-center space-y-6">
+              <div className="w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center">
+                <AlertCircle className="h-10 w-10 text-red-500" />
+              </div>
+              <div className="space-y-2">
+                <h3 className="font-bold text-lg">Camera Error</h3>
+                <p className="text-sm text-zinc-500 leading-relaxed">{error}</p>
+              </div>
               <button 
                 onClick={() => window.location.reload()}
-                className="px-6 py-2 bg-white text-black rounded-full text-sm font-bold"
+                className="w-full py-4 bg-white text-black rounded-2xl font-bold active:scale-95 transition-transform"
               >
-                Retry
+                Try Again
               </button>
             </div>
           ) : (
@@ -164,48 +184,48 @@ function Scan() {
                 autoPlay 
                 playsInline 
                 muted
-                className="absolute inset-0 w-full h-full object-cover"
+                className="absolute inset-0 w-full h-full object-cover scale-110"
               />
               <canvas ref={canvasRef} className="hidden" />
               
-              {/* Scanner Overlay */}
-              <div className="absolute inset-0 pointer-events-none">
-                <div className="absolute inset-0 border-[40px] border-black/40" />
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-56 h-56 border-2 border-white/50 rounded-2xl">
-                  <motion.div 
-                    animate={{ top: ["0%", "100%", "0%"] }}
-                    transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut" }}
-                    className="absolute left-0 right-0 h-1 bg-white shadow-[0_0_15px_rgba(255,255,255,0.8)]"
-                  />
+              {/* UI Overlay */}
+              <div className="absolute inset-0 flex items-center justify-center">
+                {/* Corner Accents */}
+                <div className="relative w-64 h-64">
+                  <div className="absolute top-0 left-0 w-10 h-10 border-t-4 border-l-4 border-white rounded-tl-3xl" />
+                  <div className="absolute top-0 right-0 w-10 h-10 border-t-4 border-r-4 border-white rounded-tr-3xl" />
+                  <div className="absolute bottom-0 left-0 w-10 h-10 border-b-4 border-l-4 border-white rounded-bl-3xl" />
+                  <div className="absolute bottom-0 right-0 w-10 h-10 border-b-4 border-r-4 border-white rounded-br-3xl" />
                   
-                  {/* Corners */}
-                  <div className="absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 border-white rounded-tl-lg" />
-                  <div className="absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 border-white rounded-tr-lg" />
-                  <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 border-white rounded-bl-lg" />
-                  <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 border-white rounded-br-lg" />
+                  {/* Scanning Line */}
+                  <motion.div 
+                    animate={{ top: ["5%", "95%", "5%"] }}
+                    transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                    className="absolute left-4 right-4 h-0.5 bg-gradient-to-r from-transparent via-white to-transparent shadow-[0_0_15px_rgba(255,255,255,1)]"
+                  />
                 </div>
               </div>
+
+              {/* Darken outside area */}
+              <div className="absolute inset-0 border-[3rem] border-black/40 pointer-events-none" />
             </>
           )}
         </div>
         
-        <div className="mt-12 text-center space-y-3">
-          <div className="flex items-center justify-center space-x-2">
-            <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-            <p className="text-xl font-bold tracking-tight">{status}</p>
+        {/* Footer Info */}
+        <div className="mt-12 text-center space-y-6">
+          <div className="space-y-1">
+            <h2 className="text-2xl font-black italic tracking-tighter uppercase">Scan QR Code</h2>
+            <p className="text-zinc-500 text-sm">Hold your card steady in front of the camera</p>
           </div>
-          <p className="text-sm text-zinc-500 max-w-[250px] mx-auto">
-            Align the QR code inside the frame to play the card's content.
-          </p>
           
-          <div className="pt-4">
-            <button 
-              onClick={() => setShowManualEntry(true)}
-              className="text-zinc-400 text-xs underline underline-offset-4 hover:text-white transition-colors"
-            >
-              Enter Card ID Manually
-            </button>
-          </div>
+          <button 
+            onClick={() => setShowManualEntry(true)}
+            className="inline-flex items-center px-6 py-3 bg-zinc-900 rounded-full border border-white/5 text-zinc-400 text-xs font-bold uppercase tracking-widest hover:bg-zinc-800 transition-colors"
+          >
+            <Play className="h-3 w-3 mr-2 fill-zinc-400" />
+            Manual Entry Fallback
+          </button>
         </div>
       </div>
 
@@ -216,30 +236,29 @@ function Scan() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 z-50 bg-black/90 backdrop-blur-xl flex items-center justify-center p-6"
+            className="absolute inset-0 z-50 bg-black/95 backdrop-blur-2xl flex items-center justify-center p-6"
           >
             <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
+              initial={{ scale: 0.9, y: 30 }}
               animate={{ scale: 1, y: 0 }}
-              className="w-full max-w-sm bg-zinc-900 border border-white/10 rounded-3xl p-8 space-y-6"
+              className="w-full max-w-sm bg-zinc-900 border border-white/10 rounded-[3rem] p-10 space-y-8 shadow-2xl"
             >
               <div className="space-y-2 text-center">
-                <h3 className="text-xl font-bold">Manual Entry</h3>
-                <p className="text-sm text-zinc-500">Enter the number on your card</p>
+                <h3 className="text-2xl font-black italic uppercase tracking-tighter">Manual Entry</h3>
+                <p className="text-sm text-zinc-500">Enter the ID number from your card</p>
               </div>
               
               <input 
                 type="text" 
                 inputMode="numeric"
-                pattern="[0-9]*"
                 value={manualId}
                 onChange={(e) => setManualId(e.target.value.replace(/\D/g, ""))}
-                placeholder="e.g. 99"
-                className="w-full bg-black border border-white/10 rounded-2xl py-4 px-6 text-center text-2xl font-bold focus:outline-none focus:border-white/30 transition-colors"
+                placeholder="00"
+                className="w-full bg-black border border-white/10 rounded-3xl py-6 px-6 text-center text-4xl font-black focus:outline-none focus:border-white/30 transition-colors placeholder:text-zinc-800"
                 autoFocus
               />
               
-              <div className="flex flex-col space-y-3">
+              <div className="flex flex-col space-y-4">
                 <button 
                   onClick={() => {
                     if (manualId) {
@@ -248,18 +267,18 @@ function Scan() {
                     }
                   }}
                   disabled={!manualId}
-                  className="w-full py-4 bg-white text-black rounded-2xl font-bold disabled:opacity-50"
+                  className="w-full py-5 bg-white text-black rounded-3xl font-black text-lg uppercase tracking-tight disabled:opacity-20 active:scale-95 transition-transform"
                 >
-                  GO TO CARD
+                  CONFIRM ID
                 </button>
                 <button 
                   onClick={() => {
                     setShowManualEntry(false);
                     setManualId("");
                   }}
-                  className="w-full py-4 bg-zinc-800 text-white rounded-2xl font-bold"
+                  className="w-full py-4 text-zinc-500 font-bold uppercase text-xs tracking-widest"
                 >
-                  CANCEL
+                  Back to Scanner
                 </button>
               </div>
             </motion.div>
