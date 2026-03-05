@@ -51,38 +51,76 @@ function Scan() {
         scannerRef.current = html5QrCode;
 
         const config = {
-          fps: 15,
-          qrbox: { width: 250, height: 250 },
-          aspectRatio: 1.0
+          fps: 25, // Daha hızlı tarama için FPS artırıldı
+          qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+            // Ekranın %70'ini kaplayan dinamik tarama alanı
+            const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+            const size = Math.floor(minEdge * 0.7);
+            return { width: size, height: size };
+          },
+          aspectRatio: 1.0,
+          experimentalFeatures: {
+            useBarCodeDetectorIfSupported: true
+          }
         };
 
         await html5QrCode.start(
           { facingMode: "environment" },
           config,
           (decodedText) => {
-            console.log("QR Found:", decodedText);
             const data = decodedText.trim();
+            const currentHost = window.location.hostname;
+            console.log("Scanned Data:", data);
             
-            let foundId = "";
-            
-            // 1. Sayı ayıklama (En garantisi)
-            const numbers = data.match(/\d+/g);
-            if (numbers && numbers.length > 0) {
-              // Eğer birden fazla sayı varsa, cards.json'da olanı veya en sondakini seç
-              foundId = numbers[numbers.length - 1];
+            let targetUrl = "";
+
+            // 1. Durum: Veri bir URL mi?
+            try {
+              // Protokol yoksa ekle (URL objesi için)
+              const urlStr = data.includes("://") ? data : `https://${data}`;
+              const url = new URL(urlStr);
+
+              // Bizim sitemiz mi? (Domain kontrolü)
+              const isOurDomain = url.hostname.includes(currentHost) || 
+                                 url.hostname.includes("vercel.app") ||
+                                 url.hostname.includes("localhost") ||
+                                 url.hostname.includes("run.app"); // AI Studio desteği
+
+              if (isOurDomain) {
+                targetUrl = url.pathname + url.search;
+              } else {
+                // Eğer bizim domain değilse ama içinde "c/" veya "play/" geçiyorsa yine de kabul et (Esneklik)
+                if (url.pathname.includes("/c/") || url.pathname.includes("/play/")) {
+                  targetUrl = url.pathname + url.search;
+                } else {
+                  setStatus("External QR ignored");
+                  return;
+                }
+              }
+            } catch (e) {
+              // 2. Durum: URL değilse, sadece sayı mı? (Kart ID'si)
+              if (/^\d+$/.test(data)) {
+                targetUrl = `/play/${data}`;
+              } else {
+                // Metin içinde sayı varsa onu almayı dene (Son çare)
+                const match = data.match(/\d+/);
+                if (match) {
+                  targetUrl = `/play/${match[0]}`;
+                } else {
+                  setStatus("Not a valid game QR");
+                  return;
+                }
+              }
             }
 
-            if (foundId) {
-              setDetectedId(foundId);
-              setStatus(`Card ${foundId} Detected!`);
+            if (targetUrl) {
+              setDetectedId(data.match(/\d+/)?.[0] || "QR");
+              setStatus("Valid QR Found!");
               
-              // Otomatik yönlendirme (Hafif gecikmeli ki kullanıcı görsün)
-              setTimeout(() => {
-                window.location.href = `/play/${foundId}`;
-              }, 800);
-
-              // Kamerayı durdur
-              html5QrCode.stop().catch(err => console.error("Stop error", err));
+              // Kamerayı durdur ve yönlendir
+              html5QrCode.stop().finally(() => {
+                window.location.href = targetUrl;
+              });
             }
           },
           () => {}
