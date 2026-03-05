@@ -40,6 +40,8 @@ function Scan() {
   const [error, setError] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(true);
   const [status, setStatus] = useState("Initializing camera...");
+  const [showManualEntry, setShowManualEntry] = useState(false);
+  const [manualId, setManualId] = useState("");
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -195,8 +197,75 @@ function Scan() {
           <p className="text-sm text-zinc-500 max-w-[250px] mx-auto">
             Align the QR code inside the frame to play the card's content.
           </p>
+          
+          <div className="pt-4">
+            <button 
+              onClick={() => setShowManualEntry(true)}
+              className="text-zinc-400 text-xs underline underline-offset-4 hover:text-white transition-colors"
+            >
+              Enter Card ID Manually
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Manual Entry Modal */}
+      <AnimatePresence>
+        {showManualEntry && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-50 bg-black/90 backdrop-blur-xl flex items-center justify-center p-6"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="w-full max-w-sm bg-zinc-900 border border-white/10 rounded-3xl p-8 space-y-6"
+            >
+              <div className="space-y-2 text-center">
+                <h3 className="text-xl font-bold">Manual Entry</h3>
+                <p className="text-sm text-zinc-500">Enter the number on your card</p>
+              </div>
+              
+              <input 
+                type="text" 
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={manualId}
+                onChange={(e) => setManualId(e.target.value.replace(/\D/g, ""))}
+                placeholder="e.g. 99"
+                className="w-full bg-black border border-white/10 rounded-2xl py-4 px-6 text-center text-2xl font-bold focus:outline-none focus:border-white/30 transition-colors"
+                autoFocus
+              />
+              
+              <div className="flex flex-col space-y-3">
+                <button 
+                  onClick={() => {
+                    if (manualId) {
+                      setIsScanning(false);
+                      navigate(`/play/${manualId}`);
+                    }
+                  }}
+                  disabled={!manualId}
+                  className="w-full py-4 bg-white text-black rounded-2xl font-bold disabled:opacity-50"
+                >
+                  GO TO CARD
+                </button>
+                <button 
+                  onClick={() => {
+                    setShowManualEntry(false);
+                    setManualId("");
+                  }}
+                  className="w-full py-4 bg-zinc-800 text-white rounded-2xl font-bold"
+                >
+                  CANCEL
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
